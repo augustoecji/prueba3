@@ -1,15 +1,16 @@
+# Javascript Node CircleCI 2.0 configuration file
+#
+# Check https://circleci.com/docs/2.0/language-javascript/ for more details
+#
 version: 2
 jobs:
   build:
     docker:
-      - image: node:11.10.1
-
+      - image: circleci/node:latest
     working_directory: ~/repo
 
     steps:
       - checkout
-
-      # Download and cache dependencies
       - restore_cache:
           keys:
             - v1-dependencies-{{ checksum "package.json" }}
@@ -22,10 +23,102 @@ jobs:
           paths:
             - node_modules
           key: v1-dependencies-{{ checksum "package.json" }}
+  test:
+    docker:
+      - image: circleci/node:latest
 
-      # run tests!
-      - run: yarn test
+    working_directory: ~/repo
 
-      - run: yarn build
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "package.json" }}
+            # fallback to using the latest cache if no exact match is found
+            - v1-dependencies-
+      - run: yarn run test
+  deployDevelopment:
+    docker:
+      - image: circleci/node:latest
+    working_directory: ~/repo
 
-      - run: yarn netlify:deploy
+    steps:
+      - checkout
+
+      # Download and cache dependencies
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "package.json" }}
+            - v1-dependencies-
+      - add_ssh_keys:
+          fingerprints:
+            - "a4:8b:b7:94:e5:e8:72:5f:3c:57:ba:d6:02:cf:69:6a"
+      - run: yarn run build
+      - run: scp -o StrictHostKeyChecking=no -r ./build/* ubuntu@18.191.208.238:/var/www/html
+      - save_cache:
+          paths:
+            - node_modules
+          key: v1-dependencies-{{ checksum "package.json" }}
+  productionDeploy:
+    docker:
+      - image: circleci/node:latest
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+      # Download and cache dependencies
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "package.json" }}
+            - v1-dependencies-
+      - add_ssh_keys:
+          fingerprints:
+            - "a4:8b:b7:94:e5:e8:72:5f:3c:57:ba:d6:02:cf:69:6a"
+      - run: yarn run build
+      - run: scp -o StrictHostKeyChecking=no -r ./build/* ubuntu@18.224.38.166:/var/www/html
+      
+      - save_cache:
+          paths:
+            - node_modules
+          key: v1-dependencies-{{ checksum "package.json" }}
+
+ 
+    
+
+
+workflows:
+  version: 2
+  normal_run:
+    jobs:
+      - build: 
+          filters:
+            branches:
+              only:
+                - master
+      - test:
+          requires:
+            - build
+          filters:
+            branches:
+              only:
+                - master
+      - deployDevelopment:
+          requires:
+            - build
+            - test
+          filters:
+            branches:
+              only:
+                - master
+      - request-testing:
+          type: approval
+          requires:
+            - deployDevelopment
+            - test
+      - productionDeploy:
+          requires:
+            - request-testing
+          filters:
+            branches:
+              only:
+                - master
